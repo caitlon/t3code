@@ -339,6 +339,15 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAge
   }
 }
 
+export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.TaggedError<ClaudeBackgroundWorkBlocksQueryReplacementError>()(
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+  {},
+) {
+  override get message(): string {
+    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
+  }
+}
+
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
@@ -6650,6 +6659,34 @@ export function makeClaudeAdapterV2(
             }),
           );
 
+        // Work the live process still runs. A subagent whose completion is
+        // already buffered is done: the buffer outlives the process.
+        const liveProcessRunsBackgroundWork = Effect.fnUntraced(function* (nativeThreadId: string) {
+          if (
+            rosterForNativeThread(
+              yield* Ref.get(pendingBackgroundTasksByNativeThread),
+              nativeThreadId,
+            ).size > 0
+          ) {
+            return true;
+          }
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              subagent.task.status === "running" &&
+              !buffered.some(
+                (message) =>
+                  message.type === "system" &&
+                  message.subtype === "task_notification" &&
+                  message.task_id === taskId,
+              )
+            ) {
+              return true;
+            }
+          }
+          return false;
+        });
+
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
@@ -6667,13 +6704,26 @@ export function makeClaudeAdapterV2(
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection);
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          // A continuation prompts nothing: it drains output the live process
+          // already produced, so it keeps that process whatever its selection.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.queryPolicyKey === queryPolicyKey &&
-            existing.selectionKey === compiledSelection.queryIdentity
+            (isClaudeProviderContinuationTurn(turnInput) ||
+              (existing.queryPolicyKey === queryPolicyKey &&
+                existing.selectionKey === compiledSelection.queryIdentity))
           ) {
             return existing;
+          }
+
+          // Background agents and shells run inside the CLI process, so a
+          // replacement would kill them and lose their results. Refuse until
+          // they finish or the user presses Stop, which closes the process.
+          if (
+            existing !== null &&
+            (yield* liveProcessRunsBackgroundWork(existing.nativeThreadId))
+          ) {
+            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
 
           // openQuery owns one live process. Closing it for another native
