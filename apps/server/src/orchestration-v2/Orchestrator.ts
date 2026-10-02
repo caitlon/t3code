@@ -3631,8 +3631,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
 
       if (steeringPolicy === "active_steering") {
+        // The steer's selection becomes the saved next-turn choice, even when it
+        // matches the running run again. A delegated completion carries the
+        // run's selection, not a user choice, so it never replaces the saved one.
         if (
-          selectionChanged &&
+          input.delegatedCompletion === undefined &&
           !modelSelectionsEqual(input.projection.thread.modelSelection, input.modelSelection)
         ) {
           yield* emitEvent({
