@@ -68,6 +68,12 @@
       "ranges": [{ "range": "=1.1.1", "status": "supported" }]
     },
     {
+      "driver": "kiro",
+      "t3CodeRange": ">=0.0.42",
+      "recommendedRange": ">=2.27.0",
+      "ranges": [{ "range": ">=2.27.0", "status": "supported" }]
+    },
+    {
       "driver": "pi",
       "t3CodeRange": ">=0.0.42",
       "recommendedRange": ">=1.0.0",
