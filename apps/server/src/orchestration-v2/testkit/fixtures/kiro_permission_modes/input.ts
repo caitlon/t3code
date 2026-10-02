@@ -1,7 +1,7 @@
 import type { OrchestratorFixtureInput } from "../shared.ts";
 
-export const KIRO_PERMISSION_FILE = "kiro-permission-probe.txt";
-export const KIRO_PERMISSION_CONTENT = "kiro permission probe";
+const KIRO_PERMISSION_FILE = "kiro-permission-probe.txt";
+const KIRO_PERMISSION_CONTENT = "kiro permission probe";
 export const KIRO_PERMISSION_PROMPT = [
   `Create a file named ${KIRO_PERMISSION_FILE} in the current workspace containing exactly: ${KIRO_PERMISSION_CONTENT}`,
   "Use one file write tool call and nothing else, then reply exactly: kiro permission done",

@@ -142,7 +142,7 @@ const decodeKiroModelList = Schema.decodeUnknownOption(KiroModelList);
  * Sessions only advertise a model choice after they start, so this is where
  * the picker learns the list. Anything unparsable keeps the built-in list.
  */
-export function kiroModelsFromList(
+function kiroModelsFromList(
   output: { readonly code: number; readonly stdout: string } | undefined,
 ): ReadonlyArray<ServerProviderModel> | undefined {
   if (output === undefined || output.code !== 0) return undefined;
