@@ -599,6 +599,35 @@ it.effect("steers a changed turn-scoped selection into a provider that cannot re
         assert.deepEqual(steered, ["steer-changed", "steer-reverted"]);
         assert.lengthOf(reverted.attempts, 1);
         assert.deepEqual(reverted.thread.modelSelection, runSelection);
+
+        // The saved choice moves to another instance while the run keeps going.
+        // Steering with the run's selection brings the thread's instance back too.
+        const otherSelection = {
+          instanceId: ProviderInstanceId.make("codex-work"),
+          model: "other",
+        };
+        const sink = yield* EventSink.EventSinkV2;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("switched-away"),
+              type: "thread.provider-switched",
+              threadId,
+              providerInstanceId: otherSelection.instanceId,
+              occurredAt: yield* DateTime.now,
+              payload: {
+                ...reverted.thread,
+                providerInstanceId: otherSelection.instanceId,
+                modelSelection: otherSelection,
+              },
+            },
+          ],
+        });
+        yield* steer("steer-back", runSelection);
+        const back = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(steered, ["steer-changed", "steer-reverted", "steer-back"]);
+        assert.equal(back.thread.providerInstanceId, instanceId);
+        assert.deepEqual(back.thread.modelSelection, runSelection);
       }).pipe(Effect.provide(layer));
     }),
   ),
