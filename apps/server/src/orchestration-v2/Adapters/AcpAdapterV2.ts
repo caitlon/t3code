@@ -241,6 +241,12 @@ export interface AcpAdapterV2Flavor {
   >;
   readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
   /**
+   * The agent advertises its model option only after `session/new` returns
+   * (Kiro sends it in a `config_option_update`), so in-session model switching
+   * is not inferred from the setup result.
+   */
+  readonly modelOptionArrivesLate?: boolean;
+  /**
    * Replaces the default model application on session setup. Returns the model
    * the session now runs on. Antigravity resolves its provider-default alias
    * against the account's catalog instead of sending it to the agent.
@@ -645,11 +651,13 @@ export const AcpProviderCapabilitiesV2 = {
 function negotiatedCapabilities(
   base: OrchestrationV2ProviderCapabilities,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+  modelOptionArrivesLate: boolean,
 ): OrchestrationV2ProviderCapabilities {
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
   const hasModelConfig =
+    modelOptionArrivesLate ||
     setup.configOptions?.some((option) => option.category === "model") === true;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
@@ -6090,7 +6098,11 @@ export function makeAcpAdapterV2(
         yield* Ref.set(activeSessionId, started.sessionId);
         yield* Ref.set(activeSessionSetup, started);
         rememberTerminalEnvironment(started.sessionId, input.threadId);
-        const capabilities = negotiatedCapabilities(flavor.capabilities, started);
+        const capabilities = negotiatedCapabilities(
+          flavor.capabilities,
+          started,
+          flavor.modelOptionArrivesLate === true,
+        );
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;

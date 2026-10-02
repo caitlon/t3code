@@ -125,7 +125,7 @@ const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
  * again. (Request ID: …)"). Show it instead of the generic failure text;
  * makeProviderFailure bounds and redacts it.
  */
-export function kiroPromptFailure(cause: unknown) {
+function kiroPromptFailure(cause: unknown) {
   return makeProviderFailure({
     cause,
     ...(isAcpRequestError(cause) ? { message: cause.errorMessage, code: String(cause.code) } : {}),
@@ -151,6 +151,8 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     capabilities: KiroProviderCapabilitiesV2,
     makeRuntime,
     promptFailure: kiroPromptFailure,
+    // See applyKiroModelSelection: `model` arrives after session/new.
+    modelOptionArrivesLate: true,
     applyModelSelection: applyKiroModelSelection,
     // Kiro's own review step: with Autopilot off (Supervised) Kiro asks the
     // user to accept a turn's changes before it ends; on (Full access) it does
