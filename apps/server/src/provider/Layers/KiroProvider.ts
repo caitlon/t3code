@@ -37,15 +37,22 @@ const KIRO_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 const KIRO_API_KEY_ENV = "KIRO_API_KEY";
 
-const kiroModels = (settings: KiroSettings) =>
-  providerModelsFromSettings(KIRO_BUILT_IN_MODELS, settings.customModels, EMPTY_CAPABILITIES);
+const kiroModels = (
+  settings: KiroSettings,
+  listed: ReadonlyArray<ServerProviderModel> = KIRO_BUILT_IN_MODELS,
+) => providerModelsFromSettings(listed, settings.customModels, EMPTY_CAPABILITIES);
 
-const snapshot = (settings: KiroSettings, checkedAt: string, probe: ProviderProbeResult) =>
+const snapshot = (
+  settings: KiroSettings,
+  checkedAt: string,
+  probe: ProviderProbeResult,
+  listed?: ReadonlyArray<ServerProviderModel>,
+) =>
   buildServerProvider({
     presentation: KIRO_PRESENTATION,
     enabled: settings.enabled,
     checkedAt,
-    models: kiroModels(settings),
+    models: kiroModels(settings, listed),
     probe,
   });
 
@@ -115,6 +122,51 @@ export function kiroAuthFromWhoami(
   };
 }
 
+const KiroModelList = Schema.fromJsonString(
+  Schema.Struct({
+    models: Schema.Array(
+      Schema.Struct({
+        model_id: Schema.String,
+        model_name: Schema.optional(Schema.String),
+      }),
+    ),
+    default_model: Schema.optional(Schema.String),
+  }),
+);
+const decodeKiroModelList = Schema.decodeUnknownOption(KiroModelList);
+
+/**
+ * Reads `kiro-cli chat --list-models --format json`, the models the signed-in
+ * account may use (Kiro 2.27 lists 20, `auto` first and marked default). The
+ * `auto` entry becomes "Kiro default", which leaves the session's model alone.
+ * Sessions only advertise a model choice after they start, so this is where
+ * the picker learns the list. Anything unparsable keeps the built-in list.
+ */
+export function kiroModelsFromList(
+  output: { readonly code: number; readonly stdout: string } | undefined,
+): ReadonlyArray<ServerProviderModel> | undefined {
+  if (output === undefined || output.code !== 0) return undefined;
+  const list = Option.getOrUndefined(decodeKiroModelList(output.stdout.trim()));
+  if (list === undefined || list.models.length === 0) return undefined;
+  const defaultId = list.default_model ?? "auto";
+  return list.models.map((model) =>
+    model.model_id === defaultId
+      ? {
+          slug: "default",
+          name: "Kiro default",
+          isCustom: false,
+          isDefault: true,
+          capabilities: EMPTY_CAPABILITIES,
+        }
+      : {
+          slug: model.model_id,
+          name: model.model_name ?? model.model_id,
+          isCustom: false,
+          capabilities: EMPTY_CAPABILITIES,
+        },
+  );
+}
+
 export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(function* (
   settings: KiroSettings,
   environment: NodeJS.ProcessEnv,
@@ -176,13 +228,34 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
       message: "Kiro CLI is installed but not signed in. Run `kiro-cli login`.",
     });
   }
-  return snapshot(settings, checkedAt, {
-    installed: true,
-    version,
-    status: auth.status === "authenticated" ? "ready" : "warning",
-    auth,
-    ...(auth.status === "authenticated"
-      ? {}
-      : { message: "Could not confirm the Kiro sign-in. Run `kiro-cli whoami` to check." }),
-  });
+  // Signed out, `--list-models` starts a browser login instead, so it runs
+  // only once `whoami` has confirmed the account.
+  const listed =
+    auth.status === "authenticated"
+      ? kiroModelsFromList(
+          yield* runKiroCli(
+            settings,
+            ["chat", "--list-models", "--format", "json"],
+            environment,
+          ).pipe(
+            Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+            Effect.map(Option.getOrUndefined),
+            Effect.orElseSucceed(() => undefined),
+          ),
+        )
+      : undefined;
+  return snapshot(
+    settings,
+    checkedAt,
+    {
+      installed: true,
+      version,
+      status: auth.status === "authenticated" ? "ready" : "warning",
+      auth,
+      ...(auth.status === "authenticated"
+        ? {}
+        : { message: "Could not confirm the Kiro sign-in. Run `kiro-cli whoami` to check." }),
+    },
+    listed,
+  );
 });

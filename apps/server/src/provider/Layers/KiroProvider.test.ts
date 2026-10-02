@@ -92,4 +92,47 @@ describe("KiroProvider", () => {
       assert.equal(snapshot.auth.status, "authenticated");
     }),
   );
+
+  // Shape of `kiro-cli chat --list-models --format json` on Kiro CLI 2.27.0, trimmed to three models.
+  const KIRO_MODEL_LIST = JSON.stringify({
+    models: [
+      { model_name: "auto", model_id: "auto", description: "Models chosen by task" },
+      { model_name: "claude-sonnet-4.5", model_id: "claude-sonnet-4.5" },
+      { model_name: "claude-haiku-4.5", model_id: "claude-haiku-4.5" },
+    ],
+    default_model: "auto",
+  });
+
+  it.effect("lists the signed-in account's models with auto as the Kiro default", () =>
+    Effect.gen(function* () {
+      const { snapshot } = yield* check({
+        "--version": { stdout: "kiro-cli 2.27.0\n", code: 0 },
+        "whoami --format json": { stdout: '{"accountType":"SocialGitHub"}\n', code: 0 },
+        "chat --list-models --format json": { stdout: `${KIRO_MODEL_LIST}\n`, code: 0 },
+      });
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.isDefault === true]),
+        [
+          ["default", true],
+          ["claude-sonnet-4.5", false],
+          ["claude-haiku-4.5", false],
+        ],
+      );
+    }),
+  );
+
+  it.effect("never lists models while signed out, where listing would start a browser login", () =>
+    Effect.gen(function* () {
+      const { snapshot, invoked } = yield* check({
+        "--version": { stdout: "kiro-cli 2.27.0\n", code: 0 },
+        "whoami --format json": { stdout: '{"account":null}\n', code: 1 },
+        "chat --list-models --format json": { stdout: `${KIRO_MODEL_LIST}\n`, code: 0 },
+      });
+      assert.notInclude(invoked, "chat --list-models --format json");
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        ["default"],
+      );
+    }),
+  );
 });

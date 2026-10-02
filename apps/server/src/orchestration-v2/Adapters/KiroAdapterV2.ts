@@ -83,8 +83,10 @@ export interface KiroAdapterV2Options {
  * Kiro 2.27 leaves `model` out of the `session/new` result and advertises it
  * in a `config_option_update` a few milliseconds later, so a fresh session can
  * be configured before T3 has seen it; the write still goes to `model` then.
- * Kiro stores any value it is sent, so once the option is known T3 refuses a
- * model it does not list instead of letting the turn run on a bogus id.
+ * Kiro accepts any value at set time but fails the next `session/prompt` on
+ * one its account cannot use (-32000 "The model '…' is not available",
+ * `InvalidModelError`), so an unknown id never runs silently on another model.
+ * Once the option is known, T3 refuses an unlisted model before prompting.
  */
 const applyKiroModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> = ({
   runtime,
