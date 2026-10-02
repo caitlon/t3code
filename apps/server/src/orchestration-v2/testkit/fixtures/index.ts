@@ -35,6 +35,14 @@ import { assertClaudeNestedSubagentModelOutput } from "./claude_nested_subagent_
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
+import {
+  kiroFullAccessWriteInput,
+  kiroSupervisedWriteInput,
+} from "./kiro_permission_modes/input.ts";
+import {
+  assertKiroFullAccessWriteOutput,
+  assertKiroSupervisedWriteOutput,
+} from "./kiro_permission_modes/output.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
 import { assertGrokBackgroundBashOutput } from "./grok_background_bash/output.ts";
@@ -461,6 +469,36 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         ),
         modelSelection: { ...GROK_MODEL_SELECTION, model: "grok-4.7-build-fast" },
         assertOutput: assertGrokAutoBlockedCommandOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_supervised_write",
+    buildInput: kiroSupervisedWriteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./kiro_permission_modes/kiro_supervised_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroSupervisedWriteOutput,
+      },
+    ],
+  },
+  {
+    name: "kiro_full_access_write",
+    buildInput: kiroFullAccessWriteInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./kiro_permission_modes/kiro_full_access_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertKiroFullAccessWriteOutput,
       },
     ],
   },

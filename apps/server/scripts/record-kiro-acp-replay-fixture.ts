@@ -340,6 +340,17 @@ function normalizeEntries(input: {
       (id, index) =>
         [id, `sess_00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`] as const,
     ),
+    // Kiro's snapshot URIs carry paths URL-encoded once or twice
+    // (`?originalPath%3D%252Fhome%252F…`); replace those forms first.
+    ...[input.workspace, input.home].flatMap((path) => {
+      const once = encodeURIComponent(path);
+      const twice = encodeURIComponent(once);
+      const placeholder = path === input.workspace ? "<workspace>" : HOME_PLACEHOLDER;
+      return [
+        [twice, encodeURIComponent(encodeURIComponent(placeholder))] as const,
+        [once, encodeURIComponent(placeholder)] as const,
+      ];
+    }),
     [input.workspace, "<workspace>"],
     [input.home, HOME_PLACEHOLDER],
   ];
