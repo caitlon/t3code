@@ -962,10 +962,13 @@ export const ProviderRegistryLive = Layer.effect(
                   if (currentInstance !== instance) return Ref.get(providersRef);
                   // Write only if the cwd's snapshot did not change during the
                   // scan. A session event or another scan that landed first is newer.
+                  // A rescan starts after the change it reports, so a scan that
+                  // started earlier and landed first is the stale one.
                   return updateProviders((currentProviders) =>
                     currentProviders.map((candidate) =>
                       candidate.instanceId === input.instanceId &&
-                      Equal.equals(workspaceSnapshotOf(candidate), scannedFrom)
+                      (input.rescan === true ||
+                        Equal.equals(workspaceSnapshotOf(candidate), scannedFrom))
                         ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, scopedSnapshot)
                         : candidate,
                     ),

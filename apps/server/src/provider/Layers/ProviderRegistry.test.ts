@@ -1896,6 +1896,120 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         { timeout: 10_000 },
       );
 
+      it.effect("lets a rescan overwrite the snapshot of an older scan that committed first", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const skillsBefore = [
+            { name: "before", path: "/workspace/before/SKILL.md", enabled: true },
+          ];
+          const skillsAfter = [{ name: "after", path: "/workspace/after/SKILL.md", enabled: true }];
+          // The first scan to start reads the folder before the hooks ran, the
+          // second after. Each waits for its own release, so the older one can
+          // commit first.
+          const scans = yield* Ref.make(0);
+          const gates = [yield* Deferred.make<void>(), yield* Deferred.make<void>()] as const;
+          const started = yield* Queue.unbounded<number>();
+          const rescans = yield* Queue.unbounded<string>();
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(machineProvider),
+              refresh: Effect.succeed(machineProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: () =>
+              Effect.gen(function* () {
+                const index = (yield* Ref.getAndUpdate(scans, (count) => count + 1)) as 0 | 1;
+                yield* Queue.offer(started, index);
+                yield* Deferred.await(gates[index]);
+                return { ...machineProvider, skills: index === 0 ? skillsBefore : skillsAfter };
+              }),
+            workspaceRescans: Stream.fromQueue(rescans),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const registryChanges = yield* PubSub.unbounded<void>();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requestedId) =>
+                    Effect.succeed(requestedId === instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.fromPubSub(registryChanges),
+                  subscribeChanges: PubSub.subscribe(registryChanges),
+                }),
+              ),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-rescan-race-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const composerScan = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            assert.strictEqual(yield* Queue.take(started), 0);
+            yield* Queue.offer(rescans, "/workspace");
+            assert.strictEqual(yield* Queue.take(started), 1);
+            const rescanned = yield* registry.streamChanges.pipe(
+              Stream.filter(
+                (providers) =>
+                  providers[0]?.workspaceSnapshots?.some((s) => s.skills === skillsAfter) === true,
+              ),
+              Stream.runHead,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(gates[0], undefined);
+            yield* Fiber.join(composerScan);
+            yield* Deferred.succeed(gates[1], undefined);
+            assert.strictEqual((yield* Fiber.join(rescanned))._tag, "Some");
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.skills),
+              [skillsAfter],
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
