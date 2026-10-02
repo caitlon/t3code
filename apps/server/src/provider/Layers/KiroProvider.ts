@@ -148,6 +148,15 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
   }
   const versionOutput = versionResult.success.value;
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  if (versionOutput.code !== 0) {
+    return snapshot(settings, checkedAt, {
+      installed: true,
+      version,
+      status: "error",
+      auth: { status: "unknown" },
+      message: "Kiro CLI is installed but failed to run.",
+    });
+  }
 
   const whoamiResult = yield* runKiroCli(
     settings,
