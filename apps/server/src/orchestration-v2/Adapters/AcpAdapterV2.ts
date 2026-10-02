@@ -6229,7 +6229,7 @@ export function makeAcpAdapterV2(
             const option = (yield* runtime.getConfigOptions).find(
               (candidate) => candidate.id === selection.id,
             );
-            if (option?.type !== "select") continue;
+            if (option?.type !== "select" || option.currentValue === selection.value) continue;
             const advertisedValues = option.options.flatMap((entry) =>
               "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
             );

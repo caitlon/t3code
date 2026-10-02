@@ -443,7 +443,8 @@ describe("KiroAdapterV2", () => {
         outbound("initialize"),
         answer("initialize", KIRO_V3_INITIALIZE),
         outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
-        // Kiro opens on Autopilot, which is already what Full access asks for.
+        // Kiro opens on Autopilot, which is already what Full access asks for, so no
+        // session/set_config_option follows: the replay agent fails on any unscripted frame.
         answer("session/new", sessionSetup([modeOption, autopilotOption("on")])),
         turnPrompt,
         answer("session/prompt", { stopReason: "end_turn" }),
