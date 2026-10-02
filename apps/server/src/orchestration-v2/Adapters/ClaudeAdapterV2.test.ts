@@ -7268,6 +7268,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
         yield* switchTurn("attempt-claude-model-change-running-subagent-c");
         assert.lengthOf(processQueues, 2);
+
+        // The stopped subagent never reports its end, so it must not block
+        // later changes on the replacement process either.
+        yield* Queue.offer(
+          processQueues[1]!,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000903",
+            result: "Switched model.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 2, "switched turn terminal");
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread: { ...providerThread, status: "active" },
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-model-change-running-subagent-d"),
+            text: "Switch back.",
+            attachments: [],
+            providerTurnOrdinal: 3,
+          }),
+        );
+        assert.lengthOf(processQueues, 3);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
