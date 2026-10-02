@@ -609,6 +609,9 @@ const scenarios = readArgValues("--scenario").flatMap((value) => value.split(","
 if (scenarios.length === 0) {
   throw new Error("Pass --scenario <fixture name>[,<fixture name>...]");
 }
+if (scenarios.length > 1 && readArgValues("--out").length > 0) {
+  throw new Error("--out cannot be used with multiple scenarios; run them separately.");
+}
 
 await Effect.runPromise(
   Effect.forEach(scenarios, (name) => Effect.scoped(recordScenario(name)), {
