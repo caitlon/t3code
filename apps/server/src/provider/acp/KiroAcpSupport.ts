@@ -18,17 +18,18 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
  * V3 rejects the v2 launch flags (`--agent`, `--model`, `--trust-*`); mode and
  * model are chosen per session through `session/set_config_option`.
  */
-export const KIRO_ACP_ARGS = ["acp", "--agent-engine=v3", "--auth-method=cli"] as const;
+const KIRO_ACP_ARGS = ["acp", "--agent-engine=v3", "--auth-method=cli"] as const;
 
 /**
- * Kiro's `autopilot` session option. "on" runs tools without asking; "off"
- * (Supervised) asks before file changes. Kiro starts sessions on "on".
+ * Kiro's `autopilot` session option, its native permission posture. "on" runs
+ * tools without asking; "off" (Supervised) asks before changes. Kiro starts
+ * sessions on "on", so T3 sets it from the thread's runtime mode.
  */
 export const KIRO_AUTOPILOT_CONFIG_ID = "autopilot";
 
 /**
- * Kiro offers two permission postures: Supervised and Autopilot. T3's
- * Supervised maps to the first, Full access to the second.
+ * Kiro offers two permission postures, Supervised and Autopilot, which T3's
+ * Supervised and Full access select. Any other mode runs Supervised.
  */
 export const KIRO_SUPPORTED_RUNTIME_MODES = [
   "approval-required",

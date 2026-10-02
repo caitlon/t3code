@@ -20,6 +20,7 @@ import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts
 import {
   KIRO_AUTOPILOT_CONFIG_ID,
   kiroApprovalOptions,
+  kiroAutopilotValue,
   makeKiroAcpRuntime,
 } from "../../provider/acp/KiroAcpSupport.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
@@ -52,8 +53,6 @@ const KiroProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
-type KiroRuntime = AcpSessionRuntime.AcpSessionRuntime["Service"];
-
 export interface KiroAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: KiroSettings;
@@ -68,36 +67,12 @@ export interface KiroAdapterV2Options {
   /** Replaces the `kiro-cli` launch (replay tests). Kiro's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
-  ) => Effect.Effect<KiroRuntime, EffectAcpErrors.AcpError, Crypto.Crypto | Scope.Scope>;
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Crypto.Crypto | Scope.Scope
+  >;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
-}
-
-/**
- * Kiro starts sessions on Autopilot, where it runs tools without asking. Turn
- * it off so every tool Kiro gates reaches T3, and the thread's runtime policy
- * answers it: Full access approves, Supervised asks the user. This holds for
- * any session the runtime opens, so a runtime serving several threads can
- * never run one of them with another thread's grants.
- */
-const superviseKiroSession = (runtime: KiroRuntime) =>
-  Effect.gen(function* () {
-    const autopilot = (yield* runtime.getConfigOptions).find(
-      (option) => option.id === KIRO_AUTOPILOT_CONFIG_ID,
-    );
-    if (autopilot?.type !== "select" || autopilot.currentValue === "off") return;
-    yield* runtime.setConfigOption(KIRO_AUTOPILOT_CONFIG_ID, "off");
-  });
-
-export function superviseKiroRuntime(runtime: KiroRuntime): KiroRuntime {
-  const supervise = <E>(
-    started: Effect.Effect<AcpSessionRuntime.AcpSessionRuntimeStartResult, E>,
-  ) => started.pipe(Effect.tap(() => superviseKiroSession(runtime)));
-  return {
-    ...runtime,
-    start: () => supervise(runtime.start()),
-    loadSession: (sessionId, options) => supervise(runtime.loadSession(sessionId, options)),
-    resumeSession: (sessionId, options) => supervise(runtime.resumeSession(sessionId, options)),
-  };
 }
 
 /**
@@ -136,7 +111,7 @@ const applyKiroModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelecti
     return requested;
   });
 
-export function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
+function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
   const makeRuntime =
     options.makeRuntime ??
     ((input: AcpAdapterV2RuntimeInput) => {
@@ -152,8 +127,15 @@ export function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdap
     driver: KIRO_PROVIDER,
     runtimeHarness: "Kiro",
     capabilities: KiroProviderCapabilitiesV2,
-    makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(superviseKiroRuntime)),
+    makeRuntime,
     applyModelSelection: applyKiroModelSelection,
+    // Kiro's own permission posture: Autopilot runs tools without asking,
+    // Supervised asks before changes. It is a per-session option, so each
+    // thread's session carries its own runtime mode. A runtime-mode change
+    // reopens the session (no in-session switch), which applies it again.
+    sessionConfigForPolicy: (policy) => [
+      { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy.runtimeMode) },
+    ],
     approvalOptions: kiroApprovalOptions,
     // Kiro V3 advertises `promptCapabilities.image`; the shared adapter reads it.
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

@@ -208,7 +208,7 @@ const openSessionFrames = (input: {
   outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
   ...kiroSessionNoise,
   answer("session/new", sessionSetup(input.configOptions)),
-  // T3 turns Autopilot off so every gated tool reaches its runtime policy.
+  // Supervised threads run Kiro with Autopilot off, its native ask-first posture.
   outbound("session/set_config_option", {
     sessionId: SESSION_ID,
     configId: "autopilot",
@@ -435,6 +435,28 @@ describe("KiroAdapterV2", () => {
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 
+  it.effect("keeps Kiro's Autopilot on for a Full access thread", () =>
+    runKiroScript({
+      scenario: "full-access-autopilot",
+      runtimeMode: "full-access",
+      frames: [
+        outbound("initialize"),
+        answer("initialize", KIRO_V3_INITIALIZE),
+        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+        // Kiro opens on Autopilot, which is already what Full access asks for.
+        answer("session/new", sessionSetup([modeOption, autopilotOption("on")])),
+        turnPrompt,
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it.effect("switches models with session/set_config_option, never session/set_model", () =>
     runKiroScript({
       scenario: "model-config-option",
@@ -449,16 +471,16 @@ describe("KiroAdapterV2", () => {
         ),
         outbound("session/set_config_option", {
           sessionId: SESSION_ID,
-          configId: "autopilot",
-          value: "off",
+          configId: "model",
+          value: "claude-sonnet",
         }),
         answer("session/set_config_option", {
-          configOptions: [modeOption, modelOption("auto"), autopilotOption("off")],
+          configOptions: [modeOption, modelOption("claude-sonnet"), autopilotOption("on")],
         }),
         outbound("session/set_config_option", {
           sessionId: SESSION_ID,
-          configId: "model",
-          value: "claude-sonnet",
+          configId: "autopilot",
+          value: "off",
         }),
         answer("session/set_config_option", {
           configOptions: [modeOption, modelOption("claude-sonnet"), autopilotOption("off")],

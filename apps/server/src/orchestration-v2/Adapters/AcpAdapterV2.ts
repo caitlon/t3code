@@ -255,6 +255,14 @@ export interface AcpAdapterV2Flavor {
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
   /**
+   * Native select-option values to apply for a runtime policy (e.g. Kiro's
+   * `autopilot`), set on every session configure. A value the session does
+   * not advertise is skipped; an agent rejecting it fails the session.
+   */
+  readonly sessionConfigForPolicy?: (
+    policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+  ) => ReadonlyArray<{ readonly id: string; readonly value: string }>;
+  /**
    * Opts the session into the ACP client `fs` capability. Agents read and write
    * files themselves under their own permission model unless a flavor sets
    * this. Requests pass the runtime policy guard, then these handlers, which
@@ -6216,6 +6224,17 @@ export function makeAcpAdapterV2(
                   }),
               }),
             );
+          }
+          for (const selection of flavor.sessionConfigForPolicy?.(runtimePolicy) ?? []) {
+            const option = (yield* runtime.getConfigOptions).find(
+              (candidate) => candidate.id === selection.id,
+            );
+            if (option?.type !== "select") continue;
+            const advertisedValues = option.options.flatMap((entry) =>
+              "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+            );
+            if (!advertisedValues.includes(selection.value)) continue;
+            yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
           if (policyMode !== undefined) {
