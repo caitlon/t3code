@@ -370,6 +370,12 @@ export const GROK_MODEL_SELECTION = {
   model: "grok-build",
 } satisfies ModelSelection;
 
+/** Kiro's cheapest listed model, so recordings stay cheap and do not depend on "auto" routing. */
+export const KIRO_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("kiro"),
+  model: "claude-haiku-4.5",
+} satisfies ModelSelection;
+
 export const OPENCODE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("opencode"),
   model: "openai/gpt-5.4-mini",
