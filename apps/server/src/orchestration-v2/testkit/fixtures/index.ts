@@ -1172,6 +1172,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertMultiTurnOutput,
       },
       {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./multi_turn/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertMultiTurnOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./multi_turn/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
@@ -1261,6 +1267,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./queued_turn/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./queued_turn/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
       {
@@ -1432,6 +1444,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("grok"),
         transcriptFile: new URL("./turn_interrupt/grok_transcript.ndjson", import.meta.url),
         modelSelection: GROK_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./turn_interrupt/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
