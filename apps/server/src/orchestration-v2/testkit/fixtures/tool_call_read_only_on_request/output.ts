@@ -106,3 +106,21 @@ function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
       return undefined;
   }
 }
+
+// Kiro also gates the write with its own prompt, here before a shell command
+// that writes the file. Its prompt carries the tool call id but no kind, and
+// only the choices T3 can honour (no session-wide "always") reach the card.
+export function assertToolCallReadOnlyOnRequestKiroOutput(
+  result: OrchestratorV2ScenarioResult,
+  transcript: ProviderReplayTranscript,
+) {
+  assertToolCallReadOnlyOnRequestOutput(result, transcript);
+  assertNoAcpClientFileOrTerminalRequests(transcript);
+  const approval = projectionFor(result, transcript.scenario).turnItems.find(
+    (item) => item.type === "approval_request",
+  );
+  assert.deepEqual(
+    approval?.type === "approval_request" ? approval.options?.map((option) => option.decision) : [],
+    ["accept", "decline", "cancel"],
+  );
+}

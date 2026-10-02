@@ -164,6 +164,7 @@ import { assertToolCallReadOnlyCursorOutput } from "./tool_call_read_only/cursor
 import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
 import {
   assertToolCallReadOnlyOnRequestGrokOutput,
+  assertToolCallReadOnlyOnRequestKiroOutput,
   assertToolCallReadOnlyOnRequestOutput,
 } from "./tool_call_read_only_on_request/output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
@@ -758,6 +759,16 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestGrokOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/kiro_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestKiroOutput,
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),
