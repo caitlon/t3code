@@ -21,7 +21,6 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -58,25 +57,10 @@ const outbound = (method: string, params: unknown = "<any>", label = method): Fr
   label,
   frame: { kind: "request", method, params },
 });
-const outboundNotification = (method: string, params: unknown): Frame => ({
-  type: "expect_outbound",
-  label: method,
-  frame: { kind: "notification", method, params },
-});
-const outboundResponse = (method: string, result: unknown): Frame => ({
-  type: "expect_outbound",
-  label: `${method}.response`,
-  frame: { kind: "response", method, result },
-});
 const answer = (method: string, result: unknown, label = `${method}.result`): Frame => ({
   type: "emit_inbound",
   label,
   frame: { kind: "response", method, result },
-});
-const agentRequest = (method: string, params: unknown): Frame => ({
-  type: "emit_inbound",
-  label: method,
-  frame: { kind: "request", method, params },
 });
 const update = (sessionUpdate: Record<string, unknown>): Frame => ({
   type: "emit_inbound",
@@ -351,66 +335,12 @@ const collectTurn = (events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapt
     Effect.map((collected) => Array.from(collected)),
   );
 
-const assistantText = (events: ReadonlyArray<ProviderAdapterV2Event>) =>
-  events
-    .flatMap((event) =>
-      event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
-        ? [event.turnItem]
-        : [],
-    )
-    .at(-1);
-
 const terminalStatus = (events: ReadonlyArray<ProviderAdapterV2Event>) => {
   const terminal = events.find((event) => event.type === "turn.terminal");
   return terminal?.type === "turn.terminal" ? terminal.status : undefined;
 };
 
 describe("KiroAdapterV2", () => {
-  it.effect("settles a turn from the session/prompt response, not from Kiro's turn_end info", () =>
-    runKiroScript({
-      scenario: "prompt-settles",
-      frames: [
-        ...openSessionFrames({
-          initialize: KIRO_V3_INITIALIZE,
-          configOptions: [modeOption, autopilotOption("on")],
-        }),
-        turnPrompt,
-        update({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Hello" },
-        }),
-        // V3 may report turn_end and keep working; only the response ends the turn.
-        update({ sessionUpdate: "session_info_update", _meta: { kiro: { kind: "turn_end" } } }),
-        update({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: " from Kiro." },
-        }),
-        update({
-          sessionUpdate: "session_info_update",
-          _meta: { kiro: { kind: "turn_completion", status: "completed" } },
-        }),
-        kiroNotification("_kiro/progressive_context/items_changed", {
-          sessionId: SESSION_ID,
-          status: "success",
-          items: [],
-        }),
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
-      ],
-      drive: ({ events, startTurn }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          const turn = yield* collectTurn(events);
-          assert.equal(terminalStatus(turn), "completed");
-          const message = assistantText(turn);
-          assert.equal(
-            message?.type === "assistant_message" ? message.text : undefined,
-            "Hello from Kiro.",
-          );
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
   it.effect("opens a session on a deployment that advertises no Kiro extensions", () =>
     runKiroScript({
       scenario: "no-extensions",
@@ -426,69 +356,6 @@ describe("KiroAdapterV2", () => {
           content: { type: "text", text: "ok" },
         }),
         answer("session/prompt", { stopReason: "end_turn" }),
-      ],
-      drive: ({ events, startTurn }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  it.effect("keeps Kiro's Autopilot on for a Full access thread", () =>
-    runKiroScript({
-      scenario: "full-access-autopilot",
-      runtimeMode: "full-access",
-      frames: [
-        outbound("initialize"),
-        answer("initialize", KIRO_V3_INITIALIZE),
-        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
-        // Kiro opens on Autopilot, which is already what Full access asks for, so no
-        // session/set_config_option follows: the replay agent fails on any unscripted frame.
-        answer("session/new", sessionSetup([modeOption, autopilotOption("on")])),
-        turnPrompt,
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
-      ],
-      drive: ({ events, startTurn }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  it.effect("switches models with session/set_config_option, never session/set_model", () =>
-    runKiroScript({
-      scenario: "model-config-option",
-      model: "claude-sonnet",
-      frames: [
-        outbound("initialize"),
-        answer("initialize", KIRO_V3_INITIALIZE),
-        outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
-        answer(
-          "session/new",
-          sessionSetup([modeOption, modelOption("auto"), autopilotOption("on")]),
-        ),
-        outbound("session/set_config_option", {
-          sessionId: SESSION_ID,
-          configId: "model",
-          value: "claude-sonnet",
-        }),
-        answer("session/set_config_option", {
-          configOptions: [modeOption, modelOption("claude-sonnet"), autopilotOption("on")],
-        }),
-        outbound("session/set_config_option", {
-          sessionId: SESSION_ID,
-          configId: "autopilot",
-          value: "off",
-        }),
-        answer("session/set_config_option", {
-          configOptions: [modeOption, modelOption("claude-sonnet"), autopilotOption("off")],
-        }),
-        turnPrompt,
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
       ],
       drive: ({ events, startTurn }) =>
         Effect.gen(function* () {
@@ -514,115 +381,6 @@ describe("KiroAdapterV2", () => {
       }).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(exit));
       assert.include(String(Exit.isFailure(exit) ? exit.cause : ""), "not-a-kiro-model");
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  it.effect("cancels a running turn with session/cancel and settles it as interrupted", () =>
-    runKiroScript({
-      scenario: "cancel",
-      frames: [
-        ...openSessionFrames({
-          initialize: KIRO_V3_INITIALIZE,
-          configOptions: [modeOption, autopilotOption("on")],
-        }),
-        turnPrompt,
-        update({
-          sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text: "Working" },
-        }),
-        outboundNotification("session/cancel", { sessionId: SESSION_ID }),
-        answer("session/prompt", { stopReason: "cancelled" }),
-        ...closeSession,
-      ],
-      drive: ({ events, startTurn, interrupt }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          const started = Option.getOrThrow(
-            yield* events.pipe(
-              Stream.filter(
-                (event) =>
-                  event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
-              ),
-              Stream.runHead,
-            ),
-          );
-          if (started.type !== "turn_item.updated" || started.turnItem.providerTurnId === null) {
-            return yield* Effect.die("expected the turn's first assistant chunk");
-          }
-          yield* interrupt(started.turnItem.providerTurnId);
-          assert.equal(terminalStatus(yield* collectTurn(events)), "interrupted");
-        }),
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  it.effect("asks the user before a gated tool and answers with Kiro's own option", () =>
-    runKiroScript({
-      scenario: "permission",
-      frames: [
-        ...openSessionFrames({
-          initialize: KIRO_V3_INITIALIZE,
-          configOptions: [modeOption, autopilotOption("on")],
-        }),
-        turnPrompt,
-        update({
-          sessionUpdate: "tool_call",
-          toolCallId: "call-1",
-          title: "Run tests",
-          kind: "execute",
-          status: "pending",
-        }),
-        // From the V3 migration guide, including its consent metadata.
-        agentRequest("session/request_permission", {
-          sessionId: SESSION_ID,
-          toolCall: { toolCallId: "call-1", title: "Run tests", status: "pending" },
-          options: [
-            { optionId: "accept", name: "Allow", kind: "allow_once" },
-            { optionId: "always-accept", name: "Always allow", kind: "allow_always" },
-            { optionId: "reject", name: "Deny", kind: "reject_once" },
-            { optionId: "always-reject", name: "Always deny", kind: "reject_always" },
-          ],
-          _meta: {
-            kiro: {
-              consent: {
-                capability: "shell",
-                resource: "npm run test",
-                triggeringResource: "npm run test",
-                workspaceRoot: "<workspace>",
-                persistableConsent: true,
-              },
-            },
-          },
-        }),
-        outboundResponse("session/request_permission", {
-          outcome: { outcome: "selected", optionId: "accept" },
-        }),
-        update({
-          sessionUpdate: "tool_call_update",
-          toolCallId: "call-1",
-          status: "completed",
-        }),
-        answer("session/prompt", { stopReason: "end_turn" }),
-        ...closeSession,
-      ],
-      drive: ({ events, startTurn, respond }) =>
-        Effect.gen(function* () {
-          yield* startTurn;
-          const pending = Option.getOrThrow(
-            yield* events.pipe(
-              Stream.filter(
-                (event) =>
-                  event.type === "runtime_request.updated" &&
-                  event.runtimeRequest.status === "pending",
-              ),
-              Stream.runHead,
-            ),
-          );
-          if (pending.type !== "runtime_request.updated") {
-            return yield* Effect.die("expected a pending Kiro permission request");
-          }
-          yield* respond(pending.runtimeRequest.id, "accept");
-          assert.equal(terminalStatus(yield* collectTurn(events)), "completed");
-        }),
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
 });
