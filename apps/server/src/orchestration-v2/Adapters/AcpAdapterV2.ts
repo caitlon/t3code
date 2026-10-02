@@ -5531,9 +5531,19 @@ export function makeAcpAdapterV2(
                 handlerGeneration,
                 Effect.gen(function* () {
                   const context = yield* activeContext;
+                  // Kiro sends the tool's kind on its `tool_call` and leaves it
+                  // off the permission request for that call; take it from the
+                  // tool already seen under the same id so policy can tell a
+                  // read from a write.
+                  const knownKind = context.tools.get(params.toolCall.toolCallId)?.kind;
                   const disposition = (flavor.permissionDisposition ?? acpPermissionDisposition)(
                     context.input.runtimePolicy,
-                    params,
+                    params.toolCall.kind == null && knownKind !== undefined
+                      ? {
+                          ...params,
+                          toolCall: { ...params.toolCall, kind: knownKind },
+                        }
+                      : params,
                   );
                   if (disposition === "allow") {
                     const optionId = selectAutoApprovedPermissionOption(params);
