@@ -6609,12 +6609,25 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(processQueues.length, 1);
         const firstProcess = processQueues[0]!;
         yield* Queue.offer(firstProcess, wakeTaskStarted);
+        // The shell leaves the roster before its notification arrives, so
+        // nothing runs in this process any more and a model change may
+        // replace it. Wake eligibility outlives the empty level.
+        yield* Queue.offer(
+          firstProcess,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [],
+            uuid: "00000000-0000-4000-8000-000000000603",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.offer(firstProcess, turnOneResult);
         yield* awaitUntil(
           () => events.some((event) => event.type === "turn.terminal"),
           "first turn terminal",
         );
-        assert.isTrue(yield* hasPendingBackgroundWork);
+        assert.isFalse(yield* hasPendingBackgroundWork);
 
         const alternateModel = {
           ...CLAUDE_TEST_MODEL_SELECTION,
@@ -7260,7 +7273,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "clears process-scoped roster when same-native-thread replacement open fails after close",
+    "keeps the process and its roster when a model change meets a running background shell",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -7378,17 +7391,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             )
             .pipe(Effect.exit);
           assert.isTrue(Exit.isFailure(failedStart));
-          // Old process was closed before the failed open: roster must not stick.
-          yield* awaitUntil(
-            () =>
-              providerThreadRosterEvents(events).some(
-                (event) =>
-                  event.providerThread.status === "idle" &&
-                  (event.providerThread.pendingBackgroundTasks?.length ?? 0) === 0,
-              ),
-            "roster cleared after failed same-thread replacement open",
-          );
-          assert.isFalse(yield* hasPendingBackgroundWork);
+          // The shell runs in the first process, so it is never closed and
+          // no replacement is opened.
+          assert.equal(openCount, 1);
+          assert.isTrue(yield* hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
   );

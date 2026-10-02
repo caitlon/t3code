@@ -2615,6 +2615,8 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
+  // Stop, rollback or fork is closing this process; its work is ending.
+  stopping: boolean;
 }
 
 interface ActiveClaudeToolCall {
@@ -6717,11 +6719,15 @@ export function makeClaudeAdapterV2(
           }
 
           // Background agents and shells run inside the CLI process, so a
-          // replacement would kill them and lose their results. Refuse until
+          // new selection would kill them and lose their results. Refuse until
           // they finish or the user presses Stop, which closes the process.
+          // Another native thread on this session is one the app thread has
+          // left (Claude sessions serve one app thread), so it is replaced.
           if (
             existing !== null &&
-            (yield* liveProcessRunsBackgroundWork(existing.nativeThreadId))
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            (yield* liveProcessRunsBackgroundWork(nativeThreadId))
           ) {
             return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
           }
@@ -6822,6 +6828,7 @@ export function makeClaudeAdapterV2(
             selectionKey: compiledSelection.queryIdentity,
             closed,
             promptEchoMode: "unknown",
+            stopping: false,
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
@@ -7186,6 +7193,7 @@ export function makeClaudeAdapterV2(
             return;
           }
 
+          existing.stopping = true;
           yield* existing.query.close.pipe(Effect.ignore);
           const closed = yield* Deferred.await(existing.closed).pipe(
             Effect.timeoutOption("10 seconds"),
