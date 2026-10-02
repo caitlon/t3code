@@ -749,6 +749,15 @@ export const ProviderRegistryLive = Layer.effect(
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
+          if (instance.workspaceRescans) {
+            yield* Stream.runForEach(instance.workspaceRescans, (cwd) =>
+              refreshWorkspaceSnapshot({
+                instanceId: instance.instanceId,
+                cwd,
+                rescan: true,
+              }).pipe(Effect.ignoreCause({ log: true })),
+            ).pipe(Effect.forkScoped);
+          }
         }
         yield* Effect.yieldNow;
 
@@ -900,7 +909,11 @@ export const ProviderRegistryLive = Layer.effect(
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
       readonly fresh?: boolean;
+      // Scan again although the cwd has a snapshot, without the machine-wide
+      // work of a fresh scan. For a change the instance itself reported.
+      readonly rescan?: boolean;
     }) {
+      const forced = input.fresh === true || input.rescan === true;
       // Fresh scans drop other instances' snapshots for this cwd first, so a
       // composer on one of them scans again on next use, even when this
       // instance is gone or cannot be scanned.
@@ -918,7 +931,7 @@ export const ProviderRegistryLive = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
-      if (!provider || !provider.enabled || (!input.fresh && scannedFrom)) {
+      if (!provider || !provider.enabled || (!forced && scannedFrom)) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -930,8 +943,8 @@ export const ProviderRegistryLive = Layer.effect(
         next.set(instance, new Set(current).add(input.cwd));
         return [true, next] as const;
       });
-      // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      // A forced scan never joins a running one, which may predate the change.
+      if (!claimed && !forced) return yield* Ref.get(providersRef);
       // Fresh scans also re-read the machine snapshot: Claude's plugin
       // commands come from it, not from the cwd scan.
       const refreshMachineSnapshot = input.fresh

@@ -19,7 +19,9 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -165,6 +167,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      // Sessions report here once their startup hooks have run; the registry
+      // listens and rescans the cwd. With no listener a report is dropped.
+      const workspaceRescans = yield* PubSub.unbounded<string>();
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
@@ -174,7 +179,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          onSessionInit: (cwd) => PubSub.publish(workspaceRescans, cwd).pipe(Effect.asVoid),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -347,6 +356,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         enabled,
         snapshot,
         invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
+        workspaceRescans: Stream.fromPubSub(workspaceRescans),
         snapshotForCwd: (cwd: string) =>
           !effectiveConfig.enabled
             ? snapshot.getSnapshot

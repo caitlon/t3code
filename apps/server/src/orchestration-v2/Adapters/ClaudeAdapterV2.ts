@@ -2660,6 +2660,7 @@ interface ClaudeLiveQueryContext {
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   readonly selectionKey: string;
+  readonly cwd: string | null;
   readonly closed: Deferred.Deferred<void, never>;
   // Whether this CLI process echoes a prompt's uuid on the first frame of
   // the turn answering it ("early") or only on its result. Learned from the
@@ -2667,6 +2668,7 @@ interface ClaudeLiveQueryContext {
   // uuid before any echo, so it echoes, but a resume's own turns can still
   // run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
+  sessionInitReported: boolean;
 }
 
 interface ActiveClaudeToolCall {
@@ -2868,6 +2870,12 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
+  /**
+   * Called with the query's cwd when its CLI process first reports `init`,
+   * which comes after SessionStart hooks have run. Once per query: the CLI
+   * repeats `init` on every turn.
+   */
+  readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
   /** Sink for wake-turn continuation requests; defaults to dropping them. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -5313,6 +5321,16 @@ export function makeClaudeAdapterV2(
           }
 
           const message = input.message;
+          if (
+            message.type === "system" &&
+            message.subtype === "init" &&
+            !liveQuery.sessionInitReported
+          ) {
+            liveQuery.sessionInitReported = true;
+            if (liveQuery.cwd !== null && adapterOptions.onSessionInit) {
+              yield* adapterOptions.onSessionInit(liveQuery.cwd);
+            }
+          }
           // Before any routing: a Monitor started during an idle wake turn
           // reports its task before the drain replays the tool call.
           yield* trackClaudeMonitorCalls(message);
@@ -6873,8 +6891,10 @@ export function makeClaudeAdapterV2(
             query: querySession,
             queryPolicyKey,
             selectionKey: compiledSelection.queryIdentity,
+            cwd: turnInput.runtimePolicy.cwd,
             closed,
             promptEchoMode: "unknown",
+            sessionInitReported: false,
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
@@ -7577,7 +7597,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "onSessionInit"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;

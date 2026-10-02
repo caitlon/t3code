@@ -9,8 +9,10 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -39,6 +41,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { discoverClaudeSkills } from "../Drivers/ClaudeSkills.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
 import * as ModelManifest from "../ModelManifest.ts";
@@ -1759,6 +1762,138 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
             assert.strictEqual(rebuilt[0]?.workspaceSnapshots, undefined);
           }).pipe(Effect.provide(runtimeServices));
         }),
+      );
+
+      it.effect(
+        "rescans a held workspace when its instance reports a started session",
+        () =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const fileSystem = yield* FileSystem.FileSystem;
+              const path = yield* Path.Path;
+              const root = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: "t3-provider-registry-session-rescan-",
+              });
+              const homePath = path.join(root, "claude-home");
+              const workspace = path.join(root, "worktree");
+              yield* fileSystem.makeDirectory(workspace, { recursive: true });
+              const driver = ProviderDriverKind.make("claudeAgent");
+              const instanceId = ProviderInstanceId.make("claudeAgent");
+              const machineProvider = {
+                instanceId,
+                driver,
+                status: "ready",
+                enabled: true,
+                installed: true,
+                auth: { status: "authenticated" },
+                checkedAt: "2026-06-10T00:00:00.000Z",
+                version: "1.0.0",
+                models: [],
+                slashCommands: [],
+                skills: [],
+              } as const satisfies ServerProvider;
+              const cacheInvalidations = yield* Ref.make(0);
+              const rescans = yield* Queue.unbounded<string>();
+              const instance: ProviderInstance = {
+                instanceId,
+                driverKind: driver,
+                continuationIdentity: {
+                  driverKind: driver,
+                  continuationKey: "claudeAgent:instance:claudeAgent",
+                },
+                displayName: undefined,
+                enabled: true,
+                snapshot: {
+                  resolveMaintenance: () =>
+                    Effect.succeed(
+                      makeManualOnlyProviderMaintenanceCapabilities({
+                        provider: driver,
+                        packageName: null,
+                      }),
+                    ),
+                  getSnapshot: Effect.succeed(machineProvider),
+                  refresh: Effect.succeed(machineProvider),
+                  streamChanges: Stream.empty,
+                  applyUsageLimits: () => Effect.void,
+                },
+                snapshotForCwd: (cwd) =>
+                  discoverClaudeSkills({ homePath }, cwd).pipe(
+                    Effect.map((skills) => ({ ...machineProvider, skills })),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
+                invalidateCaches: Ref.update(cacheInvalidations, (count) => count + 1),
+                workspaceRescans: Stream.fromQueue(rescans),
+                orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+                textGeneration: {} as ProviderInstance["textGeneration"],
+              };
+              const registryChanges = yield* PubSub.unbounded<void>();
+              const scope = yield* Scope.make();
+              yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+              const runtimeServices = yield* Layer.build(
+                ProviderRegistryLive.pipe(
+                  Layer.provideMerge(
+                    Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                      getInstance: (requestedId) =>
+                        Effect.succeed(requestedId === instanceId ? instance : undefined),
+                      listInstances: Effect.succeed([instance]),
+                      listUnavailable: Effect.succeed([]),
+                      streamChanges: Stream.fromPubSub(registryChanges),
+                      subscribeChanges: PubSub.subscribe(registryChanges),
+                    }),
+                  ),
+                  Layer.provideMerge(
+                    ServerConfig.layerTest(process.cwd(), {
+                      prefix: "t3-provider-registry-session-rescan-",
+                    }),
+                  ),
+                  Layer.provideMerge(NodeServices.layer),
+                ),
+              ).pipe(Scope.provide(scope));
+
+              yield* Effect.gen(function* () {
+                const registry = yield* ProviderRegistry.ProviderRegistry;
+                const workspaceSkills = () =>
+                  registry.getProviders.pipe(
+                    Effect.map((providers) =>
+                      providers[0]?.workspaceSnapshots
+                        ?.find((snapshot) => snapshot.cwd === workspace)
+                        ?.skills.map((skill) => skill.name),
+                    ),
+                  );
+
+                // The composer scans as soon as the worktree exists, before a
+                // SessionStart hook has linked the project skills in.
+                yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: workspace });
+                assert.deepStrictEqual(yield* workspaceSkills(), []);
+                const skillDir = path.join(workspace, ".claude", "skills", "deploy");
+                yield* fileSystem.makeDirectory(skillDir, { recursive: true });
+                yield* fileSystem.writeFileString(
+                  path.join(skillDir, "SKILL.md"),
+                  [
+                    "---",
+                    "name: deploy",
+                    "description: Deploy the app.",
+                    "---",
+                    "",
+                    "# Deploy",
+                  ].join("\n"),
+                );
+                yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: workspace });
+                assert.deepStrictEqual(yield* workspaceSkills(), []);
+
+                const update = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+                yield* Effect.yieldNow;
+                yield* Queue.offer(rescans, workspace);
+                assert.strictEqual((yield* Fiber.join(update))._tag, "Some");
+                assert.deepStrictEqual(yield* workspaceSkills(), ["deploy"]);
+                // A session start rescans the one cwd; it is not the explicit
+                // refresh that re-reads the machine snapshot.
+                assert.strictEqual(yield* Ref.get(cacheInvalidations), 0);
+              }).pipe(Effect.provide(runtimeServices));
+            }).pipe(Effect.provide(NodeServices.layer)),
+          ),
+        { timeout: 10_000 },
       );
 
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
