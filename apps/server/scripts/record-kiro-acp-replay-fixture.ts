@@ -572,6 +572,26 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
     ],
   };
 
+  // The live orchestration must already satisfy the fixture's assertions
+  // before anything is written, so a changed Kiro response can never replace
+  // a good fixture with one that fails replay. `--force` writes it anyway to
+  // inspect the frames.
+  const liveFailure = (() => {
+    try {
+      variant.assertOutput(result, transcript);
+      return undefined;
+    } catch (cause) {
+      return cause;
+    }
+  })();
+  if (liveFailure !== undefined && !process.argv.includes("--force")) {
+    return yield* Effect.die(
+      new Error(`Live orchestration failed ${fixtureName} assertions; nothing was written.`, {
+        cause: liveFailure,
+      }),
+    );
+  }
+
   const outputPath = readArgValues("--out")[0] ?? (yield* path.fromFileUrl(variant.transcriptFile));
   const { entries: transcriptEntries, ...header } = transcript;
   yield* fs.writeFileString(
@@ -583,16 +603,6 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
     ].join("\n"),
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Kiro ACP replay entries to ${outputPath}`);
-
-  // The live orchestration must already satisfy the fixture's assertions;
-  // replay then proves the recorded frames reproduce it.
-  const liveFailure = yield* Effect.try(() => variant.assertOutput(result, transcript)).pipe(
-    Effect.flip,
-    Effect.option,
-  );
-  if (liveFailure._tag === "Some") {
-    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.value);
-  }
 });
 
 const scenarios = readArgValues("--scenario").flatMap((value) => value.split(","));
