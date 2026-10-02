@@ -27,6 +27,9 @@ const KIRO_ACP_ARGS = ["acp", "--agent-engine=v3", "--auth-method=cli"] as const
  */
 export const KIRO_AUTOPILOT_CONFIG_ID = "autopilot";
 
+/** Kiro's model session option (`configId: "model"` in the V3 migration guide). */
+export const KIRO_MODEL_CONFIG_ID = "model";
+
 /**
  * Kiro offers two permission postures, Supervised and Autopilot, which T3's
  * Supervised and Full access select. Any other mode runs Supervised.

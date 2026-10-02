@@ -19,6 +19,7 @@ import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.
 import type * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
 import {
   KIRO_AUTOPILOT_CONFIG_ID,
+  KIRO_MODEL_CONFIG_ID,
   kiroApprovalOptions,
   kiroAutopilotValue,
   makeKiroAcpRuntime,
@@ -78,8 +79,12 @@ export interface KiroAdapterV2Options {
 /**
  * Kiro V3 selects models through its `model` session config option, and
  * `session/set_model` does not exist. "default" keeps the session's model.
- * A model the session does not offer fails the turn instead of silently
- * running on another one.
+ *
+ * Kiro 2.27 leaves `model` out of the `session/new` result and advertises it
+ * in a `config_option_update` a few milliseconds later, so a fresh session can
+ * be configured before T3 has seen it; the write still goes to `model` then.
+ * Kiro stores any value it is sent, so once the option is known T3 refuses a
+ * model it does not list instead of letting the turn run on a bogus id.
  */
 const applyKiroModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> = ({
   runtime,
@@ -87,27 +92,24 @@ const applyKiroModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelecti
 }) =>
   Effect.gen(function* () {
     const modelOption = (yield* runtime.getConfigOptions).find(
-      (option) => option.id === "model" || option.category === "model",
+      (option) => option.id === KIRO_MODEL_CONFIG_ID || option.category === "model",
     );
     const current = modelOption?.type === "select" ? modelOption.currentValue : undefined;
     const requested = modelSelection.model.trim();
     if (requested.length === 0 || requested === "default" || requested === current) {
       return current;
     }
-    if (modelOption?.type !== "select") {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Kiro did not offer a model choice for this session, so '${requested}' cannot be selected.`,
+    if (modelOption?.type === "select") {
+      const offered = modelOption.options.flatMap((entry) =>
+        "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
       );
+      if (!offered.includes(requested)) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Kiro model '${requested}' is unavailable for this account. Select an available model.`,
+        );
+      }
     }
-    const offered = modelOption.options.flatMap((entry) =>
-      "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
-    );
-    if (!offered.includes(requested)) {
-      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-        `Kiro model '${requested}' is unavailable for this account. Select an available model.`,
-      );
-    }
-    yield* runtime.setConfigOption(modelOption.id, requested);
+    yield* runtime.setConfigOption(modelOption?.id ?? KIRO_MODEL_CONFIG_ID, requested);
     return requested;
   });
 
