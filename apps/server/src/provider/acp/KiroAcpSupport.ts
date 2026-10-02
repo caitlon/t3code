@@ -21,9 +21,11 @@ import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 const KIRO_ACP_ARGS = ["acp", "--agent-engine=v3", "--auth-method=cli"] as const;
 
 /**
- * Kiro's `autopilot` session option, its native permission posture. "on" runs
- * tools without asking; "off" (Supervised) asks before changes. Kiro starts
- * sessions on "on", so T3 sets it from the thread's runtime mode.
+ * Kiro's `autopilot` session option. Kiro 2.27 asks the client before a tool
+ * call either way; with it "off" (Supervised) it also asks the user to review
+ * a turn's file changes before it ends ("Review changes", a `turn_approval`
+ * permission request). Kiro starts sessions on "on", so T3 sets it from the
+ * thread's runtime mode.
  */
 export const KIRO_AUTOPILOT_CONFIG_ID = "autopilot";
 

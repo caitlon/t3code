@@ -133,10 +133,11 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     capabilities: KiroProviderCapabilitiesV2,
     makeRuntime,
     applyModelSelection: applyKiroModelSelection,
-    // Kiro's own permission posture: Autopilot runs tools without asking,
-    // Supervised asks before changes. It is a per-session option, so each
-    // thread's session carries its own runtime mode. A runtime-mode change
-    // reopens the session (no in-session switch), which applies it again.
+    // Kiro's own review step: with Autopilot off (Supervised) Kiro asks the
+    // user to accept a turn's changes before it ends; on (Full access) it does
+    // not. Its per-tool prompts come either way and T3's runtime policy
+    // answers them. A runtime-mode change reopens the session, which applies
+    // the option again.
     sessionConfigForPolicy: (policy) => [
       { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy.runtimeMode) },
     ],

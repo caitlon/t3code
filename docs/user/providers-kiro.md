@@ -17,17 +17,17 @@ start.
 
 ## Models
 
-The **Kiro default** model keeps the model Kiro picks for the session. T3 Code does not list Kiro's
-models yet; to choose one, add its Kiro model ID as a custom model. A model your account does not
-offer stops the turn with an error instead of running on another model.
+The model picker lists the models your Kiro account can use once Kiro is signed in. **Kiro
+default** lets Kiro choose (its `auto` model). A model your account cannot use stops the turn with
+an error instead of running on another model.
 
 ## Permission Modes
 
-Kiro runs in its own two postures:
+Kiro asks before tool calls such as writes and commands, and T3 Code answers by the permission mode:
 
-- **Supervised** turns Kiro's Autopilot off. Kiro asks before changes, and its requests come to you
-  for approval.
-- **Full access** turns Autopilot on, so Kiro runs tools without asking.
+- **Supervised** sends those requests to you. Kiro's Autopilot is off, so Kiro also asks you to
+  review the turn's file changes before it finishes.
+- **Full access** approves them without asking you. Autopilot stays on, so there is no review step.
 
 Kiro offers no **Auto** or **Auto-accept edits**. Approvals offer only the choices Kiro sends. Kiro's
 "always allow" saves a rule for the whole workspace, so T3 Code does not offer it as a
