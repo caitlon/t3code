@@ -1458,6 +1458,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL("./message_steering/kiro_transcript.ndjson", import.meta.url),
+        modelSelection: KIRO_MODEL_SELECTION,
+        assertOutput: assertGrokMessageSteeringOutput,
+      },
+      {
         driver: ProviderDriverKind.make("acpRegistry"),
         transcriptFile: new URL("./message_steering/registry_transcript.ndjson", import.meta.url),
         modelSelection: ACP_REGISTRY_MODEL_SELECTION,
