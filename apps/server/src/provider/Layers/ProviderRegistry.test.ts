@@ -2010,6 +2010,102 @@ it.layer(Layer.mergeAll(TestNodeServices, ServerSettingsModule.layerTest(), Test
         }),
       );
 
+      it.effect("does not scan a rescan for a cwd no client asked about", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const machineProvider = {
+            instanceId,
+            driver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const scannedCwds = yield* Ref.make<ReadonlyArray<string>>([]);
+          const rescans = yield* Queue.unbounded<string>();
+          const instance: ProviderInstance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claudeAgent:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Effect.succeed(machineProvider),
+              refresh: Effect.succeed(machineProvider),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+            },
+            snapshotForCwd: (cwd) =>
+              Ref.updateAndGet(scannedCwds, (cwds) => [...cwds, cwd]).pipe(
+                // Each scan differs, so every commit is a visible change.
+                Effect.map((cwds) => ({
+                  ...machineProvider,
+                  skills: [{ name: `scan-${cwds.length}`, path: `${cwd}/SKILL.md`, enabled: true }],
+                })),
+              ),
+            workspaceRescans: Stream.fromQueue(rescans),
+            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          };
+          const registryChanges = yield* PubSub.unbounded<void>();
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(
+                Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
+                  getInstance: (requestedId) =>
+                    Effect.succeed(requestedId === instanceId ? instance : undefined),
+                  listInstances: Effect.succeed([instance]),
+                  listUnavailable: Effect.succeed([]),
+                  streamChanges: Stream.fromPubSub(registryChanges),
+                  subscribeChanges: PubSub.subscribe(registryChanges),
+                }),
+              ),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-unrequested-rescan-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/requested" });
+            // Sessions of threads nobody has open report their cwd too; those
+            // must not add entries that evict a composer's snapshot.
+            const updated = yield* registry.streamChanges.pipe(Stream.runHead, Effect.forkChild);
+            yield* Effect.yieldNow;
+            yield* Queue.offer(rescans, "/unrequested");
+            yield* Queue.offer(rescans, "/requested");
+            assert.strictEqual((yield* Fiber.join(updated))._tag, "Some");
+            assert.deepStrictEqual(yield* Ref.get(scannedCwds), ["/requested", "/requested"]);
+            assert.deepStrictEqual(
+              (yield* registry.getProviders)[0]?.workspaceSnapshots?.map((s) => s.cwd),
+              ["/requested"],
+            );
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("refreshes OpenCode catalogs and preserves other providers", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");

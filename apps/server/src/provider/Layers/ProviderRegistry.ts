@@ -936,6 +936,17 @@ export const ProviderRegistryLive = Layer.effect(
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
+      // Snapshots go to every client and are capped, so a rescan only
+      // refreshes a cwd a client asked about: one it holds a snapshot for, or
+      // whose first scan is still running and may have read the folder too
+      // early. Sessions of threads nobody has open add nothing.
+      if (
+        input.rescan === true &&
+        !scannedFrom &&
+        !(yield* Ref.get(workspaceRefreshesRef)).get(instance)?.has(input.cwd)
+      ) {
+        return providers;
+      }
       const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
         if (current?.has(input.cwd)) return [false, refreshes] as const;
