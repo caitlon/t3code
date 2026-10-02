@@ -7,6 +7,11 @@ import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import type * as EffectAcpErrors from "effect-acp/errors";
 
+import {
+  acpPermissionDisposition,
+  type AcpPermissionDisposition,
+  type AcpRuntimePolicy,
+} from "./AcpClientPolicy.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
 
 /**
@@ -41,8 +46,22 @@ export const KIRO_SUPPORTED_RUNTIME_MODES = [
   "full-access",
 ] as const satisfies ReadonlyArray<RuntimeMode>;
 
-export function kiroAutopilotValue(runtimeMode: RuntimeMode): "on" | "off" {
-  return runtimeMode === "full-access" ? "on" : "off";
+/**
+ * Autopilot is on only for an unrestricted Full access thread. An explicit
+ * approval or sandbox override keeps Kiro Supervised, so its end-of-turn
+ * review still reaches the user and every tool prompt reaches T3's policy
+ * check (the same rule as Grok's `grokLaunchRuntimeMode`).
+ */
+export function kiroAutopilotValue(policy: {
+  readonly runtimeMode: RuntimeMode;
+  readonly approvalPolicy?: unknown;
+  readonly sandboxPolicy?: unknown;
+}): "on" | "off" {
+  return policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined
+    ? "on"
+    : "off";
 }
 
 type KiroAcpRuntimeSettings = Pick<KiroSettings, "binaryPath">;
@@ -76,6 +95,23 @@ export function kiroApprovalOptions(
     ...(has("reject_once") ? [{ decision: "decline", label: "Deny" } as const] : []),
     { decision: "cancel", label: "Cancel" },
   ];
+}
+
+/**
+ * T3's answer to a Kiro permission request. A policy approval may only use
+ * Kiro's `allow_once`: its `allow_always` saves a consent rule for the whole
+ * workspace or wider, which would outlive the thread. When Kiro offers no
+ * one-time choice, the request goes to the user instead of persisting a grant.
+ */
+export function kiroPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+): AcpPermissionDisposition {
+  const disposition = acpPermissionDisposition(policy, request);
+  const offersOnce = request.options.some(
+    (option) => option.kind === "allow_once" && option.optionId.trim().length > 0,
+  );
+  return disposition === "allow" && !offersOnce ? "ask" : disposition;
 }
 
 export interface KiroAcpRuntimeInput extends Omit<

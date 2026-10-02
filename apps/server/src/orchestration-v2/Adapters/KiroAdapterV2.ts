@@ -22,11 +22,13 @@ import {
   KIRO_MODEL_CONFIG_ID,
   kiroApprovalOptions,
   kiroAutopilotValue,
+  kiroPermissionDisposition,
   makeKiroAcpRuntime,
 } from "../../provider/acp/KiroAcpSupport.ts";
 import * as ProviderEventLoggers from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as IdAllocator from "../IdAllocator.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -115,6 +117,22 @@ const applyKiroModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelecti
     return requested;
   });
 
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+
+/**
+ * Kiro's prompt errors carry a message meant for the user (live 2.27: -32000
+ * "The model 'x' is not available. Please select a different model and try
+ * again. (Request ID: …)"). Show it instead of the generic failure text;
+ * makeProviderFailure bounds and redacts it.
+ */
+export function kiroPromptFailure(cause: unknown) {
+  return makeProviderFailure({
+    cause,
+    ...(isAcpRequestError(cause) ? { message: cause.errorMessage, code: String(cause.code) } : {}),
+    class: "provider_error",
+  });
+}
+
 function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Flavor {
   const makeRuntime =
     options.makeRuntime ??
@@ -132,6 +150,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     runtimeHarness: "Kiro",
     capabilities: KiroProviderCapabilitiesV2,
     makeRuntime,
+    promptFailure: kiroPromptFailure,
     applyModelSelection: applyKiroModelSelection,
     // Kiro's own review step: with Autopilot off (Supervised) Kiro asks the
     // user to accept a turn's changes before it ends; on (Full access) it does
@@ -139,8 +158,9 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
     // answers them. A runtime-mode change reopens the session, which applies
     // the option again.
     sessionConfigForPolicy: (policy) => [
-      { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy.runtimeMode) },
+      { id: KIRO_AUTOPILOT_CONFIG_ID, value: kiroAutopilotValue(policy) },
     ],
+    permissionDisposition: kiroPermissionDisposition,
     approvalOptions: kiroApprovalOptions,
     // Kiro V3 advertises `promptCapabilities.image`; the shared adapter reads it.
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

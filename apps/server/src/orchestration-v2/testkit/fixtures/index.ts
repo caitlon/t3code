@@ -168,7 +168,10 @@ import {
   assertToolCallReadOnlyOnRequestKiroOutput,
   assertToolCallReadOnlyOnRequestOutput,
 } from "./tool_call_read_only_on_request/output.ts";
-import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
+import {
+  toolCallReadOnlyOnRequestInput,
+  toolCallReadOnlyOnRequestKiroInput,
+} from "./tool_call_read_only_on_request/input.ts";
 import {
   stopBackgroundWorkAfterFailedTurnInput,
   stopBackgroundWorkAfterReleaseInput,
@@ -475,6 +478,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "kiro_tool_call_read_only_on_request",
+    buildInput: toolCallReadOnlyOnRequestKiroInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("kiro"),
+        transcriptFile: new URL(
+          "./tool_call_read_only_on_request/kiro_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: KIRO_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
+        assertOutput: assertToolCallReadOnlyOnRequestKiroOutput,
+      },
+    ],
+  },
+  {
     name: "kiro_supervised_write",
     buildInput: kiroSupervisedWriteInput,
     providers: [
@@ -760,16 +779,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: GROK_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestGrokOutput,
-      },
-      {
-        driver: ProviderDriverKind.make("kiro"),
-        transcriptFile: new URL(
-          "./tool_call_read_only_on_request/kiro_transcript.ndjson",
-          import.meta.url,
-        ),
-        modelSelection: KIRO_MODEL_SELECTION,
-        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
-        assertOutput: assertToolCallReadOnlyOnRequestKiroOutput,
       },
       {
         driver: ProviderDriverKind.make("acpRegistry"),

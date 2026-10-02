@@ -25,6 +25,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as ServerConfig from "../../config.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -38,6 +39,11 @@ import {
   makeAcpReplayCompletenessAssertion,
   makeAcpReplayRuntime,
 } from "./AcpAdapterV2.testkit.ts";
+import { readProviderReplayTranscript } from "../testkit/ReplayTranscriptNdjson.ts";
+import {
+  kiroAutopilotValue,
+  kiroPermissionDisposition,
+} from "../../provider/acp/KiroAcpSupport.ts";
 import { KIRO_PROVIDER, makeKiroAdapterV2 } from "./KiroAdapterV2.ts";
 
 const testLayer = Layer.mergeAll(
@@ -383,4 +389,122 @@ describe("KiroAdapterV2", () => {
       assert.include(String(Exit.isFailure(exit) ? exit.cause : ""), "not-a-kiro-model");
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
+});
+
+describe("KiroAdapterV2 unknown model", () => {
+  // Recorded live from Kiro 2.27.0 with the thread on a model id the account
+  // lacks. Kiro has not advertised `model` yet, so T3 sends the id; Kiro
+  // accepts it and fails the prompt with its own explanation.
+  it.effect("fails the turn with Kiro's own unavailable-model message", () =>
+    Effect.gen(function* () {
+      const recorded = yield* readProviderReplayTranscript(
+        new URL("../testkit/fixtures/kiro_unknown_model/kiro_transcript.ndjson", import.meta.url),
+      );
+      const firstPromptAnswer = recorded.entries.findIndex(
+        (entry) =>
+          entry.type === "emit_inbound" &&
+          (entry.frame as { kind?: unknown; method?: unknown }).kind === "response" &&
+          (entry.frame as { method?: unknown }).method === "session/prompt",
+      );
+      const frames = recorded.entries.slice(0, firstPromptAnswer + 1).map((entry) => {
+        const frame = entry.type === "runtime_exit" ? undefined : (entry.frame as Frame);
+        return frame?.method === "session/prompt" && frame.kind === "request"
+          ? { ...entry, frame: { ...frame, params: "<any>" } }
+          : entry;
+      });
+      const sessionId = recorded.entries.flatMap((entry) => {
+        const frame = entry.type === "runtime_exit" ? undefined : (entry.frame as Frame);
+        const result = frame?.result as { sessionId?: unknown } | undefined;
+        return frame?.method === "session/new" && typeof result?.sessionId === "string"
+          ? [result.sessionId]
+          : [];
+      })[0];
+      yield* runKiroScript({
+        scenario: "unknown-model",
+        model: "not-a-kiro-model",
+        // As recorded: Kiro already runs on Autopilot, so T3 writes only the model.
+        runtimeMode: "full-access",
+        frames: [
+          ...(frames as ReadonlyArray<Frame>),
+          outbound("session/close", { sessionId }),
+          answer("session/close", {}),
+        ],
+        drive: ({ events, startTurn }) =>
+          Effect.gen(function* () {
+            yield* startTurn;
+            const turn = yield* collectTurn(events);
+            const terminal = turn.find((event) => event.type === "turn.terminal");
+            if (terminal?.type !== "turn.terminal" || terminal.status !== "failed") {
+              return yield* Effect.die("the unknown model must fail its turn");
+            }
+            assert.include(terminal.failure.message, "not-a-kiro-model");
+            assert.include(terminal.failure.message, "is not available");
+            assert.equal(terminal.failure.code, "-32000");
+          }),
+      });
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+});
+
+describe("Kiro permission policy", () => {
+  const policy = (input: {
+    readonly runtimeMode: RuntimeMode;
+    readonly approvalPolicy?: unknown;
+    readonly sandboxPolicy?: unknown;
+  }) =>
+    ProviderAdapterV2RuntimePolicy.make({
+      interactionMode: "default",
+      cwd: "/workspace",
+      ...input,
+    });
+
+  it("keeps Autopilot on only for an unrestricted Full access thread", () => {
+    assert.equal(kiroAutopilotValue(policy({ runtimeMode: "full-access" })), "on");
+    assert.equal(kiroAutopilotValue(policy({ runtimeMode: "approval-required" })), "off");
+    // An explicit override restricts Full access, so Kiro's review stays on.
+    assert.equal(
+      kiroAutopilotValue(policy({ runtimeMode: "full-access", approvalPolicy: "on-request" })),
+      "off",
+    );
+    assert.equal(
+      kiroAutopilotValue(
+        policy({ runtimeMode: "full-access", sandboxPolicy: { type: "readOnly" } }),
+      ),
+      "off",
+    );
+  });
+
+  const writeRequest = (
+    options: EffectAcpSchema.RequestPermissionRequest["options"],
+  ): EffectAcpSchema.RequestPermissionRequest => ({
+    sessionId: "session-1",
+    toolCall: { toolCallId: "call-1", title: "Write File", kind: "edit" },
+    options,
+  });
+
+  it("never lets a policy approval persist Kiro's workspace-wide allow_always", () => {
+    const fullAccess = policy({ runtimeMode: "full-access" });
+    assert.equal(
+      kiroPermissionDisposition(
+        fullAccess,
+        writeRequest([
+          { optionId: "accept", name: "Allow", kind: "allow_once" },
+          { optionId: "always-accept", name: "Always allow", kind: "allow_always" },
+        ]),
+      ),
+      "allow",
+    );
+    // With no one-time choice, approving would save a rule beyond the thread,
+    // so the request goes to the user instead.
+    assert.equal(
+      kiroPermissionDisposition(
+        fullAccess,
+        writeRequest([
+          { optionId: "always-accept", name: "Always allow", kind: "allow_always" },
+          { optionId: "reject", name: "Deny", kind: "reject_once" },
+        ]),
+      ),
+      "ask",
+    );
+  });
 });
