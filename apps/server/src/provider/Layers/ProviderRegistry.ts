@@ -53,7 +53,7 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "../providerStatusCache.ts";
-import type { ProviderInstance } from "../ProviderDriver.ts";
+import type { ProviderInstance, ProviderWorkspaceSnapshot } from "../ProviderDriver.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
@@ -94,12 +94,16 @@ function dropProviderWorkspaceSnapshot(provider: ServerProvider, cwd: string): S
 export function upsertProviderWorkspaceSnapshot(
   provider: ServerProvider,
   cwd: string,
-  scopedSnapshot: ServerProvider,
+  scopedSnapshot: ProviderWorkspaceSnapshot,
 ): ServerProvider {
   const workspaceSnapshot = {
     cwd,
     checkedAt: scopedSnapshot.checkedAt,
-    slashCommands: scopedSnapshot.slashCommands,
+    slashCommands: scopedSnapshot.slashCommandsPending
+      ? (provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd)?.slashCommands ??
+        scopedSnapshot.slashCommands)
+      : scopedSnapshot.slashCommands,
+    ...(scopedSnapshot.slashCommandsPending ? { slashCommandsPending: true } : {}),
     skills: scopedSnapshot.skills,
   } satisfies NonNullable<ServerProvider["workspaceSnapshots"]>[number];
   return {
@@ -713,7 +717,11 @@ export const ProviderRegistryLive = Layer.effect(
       const workspaceSnapshotOf = (candidate: ServerProvider | undefined) =>
         candidate?.workspaceSnapshots?.find((s) => s.cwd === input.cwd);
       const scannedFrom = workspaceSnapshotOf(provider);
-      if (!provider || !provider.enabled || (!forced && scannedFrom)) {
+      if (
+        !provider ||
+        !provider.enabled ||
+        (!forced && scannedFrom && !scannedFrom.slashCommandsPending)
+      ) {
         return providers;
       }
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
@@ -739,8 +747,7 @@ export const ProviderRegistryLive = Layer.effect(
       // A forced scan never joins a running one, which may predate the change.
       if (!claimed && !forced) return yield* Ref.get(providersRef);
       const startedAt = yield* Ref.updateAndGet(scanStartsRef, (count) => count + 1);
-      // Fresh scans also re-read the machine snapshot: Claude's plugin
-      // commands come from it, not from the cwd scan.
+      // Fresh scans also re-read the machine snapshot after invalidating caches.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
             Effect.andThen(refreshInstance(input.instanceId)),
@@ -749,7 +756,7 @@ export const ProviderRegistryLive = Layer.effect(
       return yield* refreshMachineSnapshot.pipe(
         Effect.andThen(instance.snapshotForCwd(input.cwd)),
         Effect.flatMap((scopedSnapshot) =>
-          scopedSnapshot.status === "error"
+          scopedSnapshot.status === "error" && scopedSnapshot.slashCommandsPending === undefined
             ? Ref.get(providersRef)
             : instanceRegistry.getInstance(input.instanceId).pipe(
                 Effect.flatMap((currentInstance) => {
