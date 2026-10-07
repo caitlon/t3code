@@ -185,7 +185,6 @@ const makeTildeProviderFixtures = Effect.fn(
   );
   yield* fileSystem.writeFileString(
     codexScriptPath,
-    // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
     JSON.stringify({ rootThreadId: "probe-thread", notifications: [] }),
   );
   yield* fileSystem.chmod(codexPath, 0o755);
@@ -359,7 +358,6 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const fixtures = yield* makeTildeProviderFixtures();
       yield* fileSystem.writeFileString(
         fixtures.codexScriptPath,
-        // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed script document read by the external Codex mock peer.
         JSON.stringify({
           rootThreadId: "probe-thread",
           notifications: [],
